@@ -1,10 +1,10 @@
-import { Pool } from 'pg';
+import type { Pool } from 'pg';
 import {
   applyMigrations,
   startTestContainers,
   stopTestContainers,
-  TestContainers,
 } from '../helpers/containers.js';
+import type { TestContainers } from '../helpers/containers.js';
 
 describe('database migrations and invariants', () => {
   let containers: TestContainers;
