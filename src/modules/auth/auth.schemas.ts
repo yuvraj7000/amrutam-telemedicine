@@ -17,5 +17,14 @@ export const refreshSchema = z.object({ refreshToken: z.string().min(1) }).stric
 export const changePasswordSchema = z.object({ currentPassword: z.string(), newPassword: password }).strict();
 export const forgotPasswordSchema = z.object({ email: z.string().email() }).strict();
 export const resetPasswordSchema = z.object({ token: z.string().min(1), newPassword: password }).strict();
+export const verifyMfaSchema = z.object({
+  mfaToken: z.string().min(1),
+  code: z.string().regex(/^\d{6}$/).optional(),
+  backupCode: z.string().min(1).max(64).optional(),
+}).strict().refine((value) => Boolean(value.code) !== Boolean(value.backupCode), {
+  message: 'Provide either a TOTP code or a backup code.',
+});
+export const enableMfaSchema = z.object({ code: z.string().regex(/^\d{6}$/) }).strict();
+export const disableMfaSchema = z.object({ password: z.string().min(1).max(256), code: z.string().regex(/^\d{6}$/) }).strict();
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;

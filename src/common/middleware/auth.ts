@@ -4,7 +4,7 @@ import { env } from '../../config/env.js';
 import { UnauthorizedError } from '../errors/index.js';
 import { redis } from '../cache/redis.js';
 
-export type AuthUser = { id: string; role: string; sid: string; amr: string[]; iat: number; jti: string };
+export type AuthUser = { id: string; role: string; sid?: string; amr?: string[]; scope?: string; iat: number; jti: string };
 declare global {
   // Express's Request interface is augmented for the request-scoped identity.
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -14,9 +14,10 @@ export const publicRoute: RequestHandler & { isPublic?: true } = (_req, _res, ne
 publicRoute.isPublic = true;
 export const publicMarker = publicRoute;
 
-export const authenticate: RequestHandler & { requiresAuth?: true } = async (
-  req: Request, _res: Response, next: NextFunction,
-) => {
+function authenticateScopes(allowSetupScope: boolean): RequestHandler & { requiresAuth?: true } {
+  const handler: RequestHandler & { requiresAuth?: true } = async (
+    req: Request, _res: Response, next: NextFunction,
+  ) => {
   try {
     const header = req.header('authorization');
     if (!header?.startsWith('Bearer ')) throw new UnauthorizedError();
@@ -28,10 +29,13 @@ export const authenticate: RequestHandler & { requiresAuth?: true } = async (
     const payload = jwt.verify(token, env.JWT_KEYS[kid], {
       algorithms: ['HS256'], audience: 'amrutam-api', issuer: 'amrutam',
     }) as JwtPayload;
+    const setupToken = payload.scope === 'mfa_setup';
+    const validAccessToken = payload.scope === undefined && typeof payload.sid === 'string' &&
+      Array.isArray(payload.amr) && payload.amr.every((value) => typeof value === 'string');
+    const validSetupToken = allowSetupScope && setupToken;
     if (typeof payload.sub !== 'string' || typeof payload.role !== 'string' ||
-      typeof payload.sid !== 'string' || typeof payload.jti !== 'string' ||
-      typeof payload.iat !== 'number' || !Array.isArray(payload.amr) ||
-      !payload.amr.every((value) => typeof value === 'string')) throw new UnauthorizedError();
+      typeof payload.jti !== 'string' || typeof payload.iat !== 'number' ||
+      (!validAccessToken && !validSetupToken)) throw new UnauthorizedError();
     const key = `user:${payload.sub}:tva`;
     const cached = await redis.get(key);
     if (cached) {
@@ -45,8 +49,21 @@ export const authenticate: RequestHandler & { requiresAuth?: true } = async (
       if (!tva || payload.iat < tva.getTime() / 1000) throw new UnauthorizedError();
       await redis.set(key, tva.toISOString(), 'EX', 60);
     }
-    req.user = { id: payload.sub, role: payload.role, sid: payload.sid, amr: payload.amr, iat: payload.iat, jti: payload.jti };
+    req.user = {
+      id: payload.sub,
+      role: payload.role,
+      ...(typeof payload.sid === 'string' ? { sid: payload.sid } : {}),
+      ...(Array.isArray(payload.amr) ? { amr: payload.amr as string[] } : {}),
+      ...(typeof payload.scope === 'string' ? { scope: payload.scope } : {}),
+      iat: payload.iat,
+      jti: payload.jti,
+    };
     next();
   } catch (error) { next(error instanceof UnauthorizedError ? error : new UnauthorizedError()); }
-};
-authenticate.requiresAuth = true;
+  };
+  handler.requiresAuth = true;
+  return handler;
+}
+
+export const authenticate = authenticateScopes(false);
+export const authenticateMfaSetup = authenticateScopes(true);

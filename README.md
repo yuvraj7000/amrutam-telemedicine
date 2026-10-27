@@ -129,7 +129,7 @@ npm run dev                     # API on :3000 (hot reload)
 npm run dev:worker              # background jobs (separate terminal)
 ```
 
-Create an admin (admins can't self-register): `npm run admin:create -- --email you@example.com`
+Create an admin (admins can't self-register): run `npm run admin:create` and follow the prompts. The password is entered without echo and is never accepted as a command-line argument.
 
 ---
 

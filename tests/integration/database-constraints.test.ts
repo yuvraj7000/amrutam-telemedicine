@@ -1,4 +1,6 @@
 import type { Pool } from 'pg';
+import { EncryptionService } from '../../src/common/crypto/encryption.service.js';
+import { EnvKeyProvider } from '../../src/common/crypto/key-provider.js';
 import {
   applyMigrations,
   startTestContainers,
@@ -64,6 +66,30 @@ describe('database migrations and invariants', () => {
         [patient, doctor, slot],
       ),
     ).rejects.toMatchObject({ code: '23505', constraint: 'uq_consultation_live_slot' });
+  });
+
+  it('stores MFA secrets as encrypted ciphertext', async () => {
+    const userId = '11111111-1111-1111-1111-111111111299';
+    const secret = 'JBSWY3DPEHPK3PXP';
+    const encryption = new EncryptionService(
+      new EnvKeyProvider({
+        ENC_KEYS: { '1': Buffer.alloc(32, 7).toString('base64') },
+        ENC_ACTIVE_VERSION: 1,
+      }),
+    );
+    const ciphertext = encryption.encrypt(secret, `users.mfa_secret_enc:${userId}`);
+    await pool.query(
+      'INSERT INTO users (id,email,password_hash,mfa_secret_enc) VALUES ($1,$2,$3,$4)',
+      [userId, 'mfa-ciphertext@example.test', 'test-hash', ciphertext],
+    );
+
+    const raw = await pool.query<{ mfa_secret_enc: string }>(
+      'SELECT mfa_secret_enc FROM users WHERE id=$1',
+      [userId],
+    );
+    expect(raw.rows[0]?.mfa_secret_enc).toMatch(/^v1:/);
+    expect(raw.rows[0]?.mfa_secret_enc).not.toContain(secret);
+    expect(encryption.decrypt(raw.rows[0]?.mfa_secret_enc ?? '', `users.mfa_secret_enc:${userId}`)).toBe(secret);
   });
 
   it('protects audit logs and creates the current and future partitions', async () => {
