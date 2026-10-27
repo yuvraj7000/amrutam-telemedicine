@@ -1,0 +1,17 @@
+process.env.NODE_ENV = 'test';
+process.env.PORT = '3000';
+process.env.LOG_LEVEL = 'info';
+process.env.CORS_ORIGINS = 'http://localhost:5173';
+process.env.TRUST_PROXY = '0';
+process.env.DATABASE_URL = 'postgres://test:test@localhost:5432/test';
+process.env.DATABASE_READ_URL = '';
+process.env.REDIS_URL = 'redis://localhost:6379';
+process.env.JWT_KEYS = '{"k1":"test-key"}';
+process.env.JWT_ACTIVE_KID = 'k1';
+process.env.ENC_KEYS = '{"1":"test-encryption-key"}';
+process.env.ENC_ACTIVE_VERSION = '1';
+process.env.PAYMENT_PROVIDER = 'mock';
+process.env.PAYMENT_WEBHOOK_SECRET = 'test-webhook-secret';
+process.env.PAYMENT_API_KEY = '';
+process.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://localhost:4318';
+process.env.METRICS_TOKEN = 'test-metrics-token';
