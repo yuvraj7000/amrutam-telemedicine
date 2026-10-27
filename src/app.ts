@@ -7,7 +7,17 @@ import { errorHandler } from './common/middleware/error-handler.js';
 import { notFound } from './common/middleware/not-found.js';
 import { requestId } from './common/middleware/request-id.js';
 import { httpLogger } from './common/observability/logger.js';
+import { metricsHandler, metricsMiddleware } from './common/observability/metrics.js';
+import { checkDatabase } from './common/db/kysely.js';
+import { checkRedis } from './common/cache/redis.js';
 import { env } from './config/env.js';
+import { container, createRequestScope } from './container.js';
+
+let shuttingDown = false;
+
+export function setShuttingDown(value: boolean): void {
+  shuttingDown = value;
+}
 
 export function createApp(): express.Express {
   const app = express();
@@ -15,6 +25,13 @@ export function createApp(): express.Express {
 
   app.use(requestId);
   app.use(httpLogger);
+  app.use(metricsMiddleware);
+  app.use((req, res, next) => {
+    const scope = createRequestScope(container);
+    res.locals.container = scope;
+    (req as express.Request & { scope: typeof scope }).scope = scope;
+    next();
+  });
   app.use(helmet());
   app.use(
     cors({
@@ -29,9 +46,22 @@ export function createApp(): express.Express {
   app.get('/health/live', (_req, res) => {
     res.status(200).json({ status: 'ok' });
   });
-  app.get('/health/ready', (_req, res) => {
-    res.status(200).json({ status: 'ready' });
+  app.get('/health/ready', async (_req, res) => {
+    if (shuttingDown) {
+      res.status(503).json({ status: 'shutting_down' });
+      return;
+    }
+    const checks = await Promise.allSettled([checkDatabase(), checkRedis()]);
+    const ready = checks.every((check) => check.status === 'fulfilled');
+    res.status(ready ? 200 : 503).json({
+      status: ready ? 'ready' : 'not_ready',
+      checks: {
+        postgres: checks[0]?.status === 'fulfilled' ? 'ok' : 'error',
+        redis: checks[1]?.status === 'fulfilled' ? 'ok' : 'error',
+      },
+    });
   });
+  app.get('/metrics', metricsHandler);
 
   app.use(notFound);
   app.use(errorHandler);
