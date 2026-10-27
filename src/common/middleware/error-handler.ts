@@ -52,5 +52,7 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, next) => {
     requestId,
     ...(appError.errors ? { errors: appError.errors } : {}),
   };
+  const retryAfter = (appError as AppError & { retryAfter?: number }).retryAfter;
+  if (retryAfter !== undefined) res.setHeader('Retry-After', String(retryAfter));
   res.status(appError.status).type('application/problem+json').json(problem);
 };

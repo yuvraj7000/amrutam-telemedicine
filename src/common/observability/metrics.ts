@@ -49,6 +49,12 @@ export const retries = new Counter({
   labelNames: ['op'],
   registers: [metricsRegistry],
 });
+export const authEvents = new Counter({
+  name: 'auth_events_total',
+  help: 'Authentication security events',
+  labelNames: ['event'],
+  registers: [metricsRegistry],
+});
 
 export function metricsMiddleware(req: Request, res: Response, next: NextFunction): void {
   const started = process.hrtime.bigint();

@@ -1,0 +1,32 @@
+import { primaryPool } from '../../common/db/kysely.js';
+import { sha256 } from '../../common/crypto/hash.js';
+export type UserRow = { id: string; email: string; phone: string | null; password_hash: string; role: string; status: string; mfa_enabled: boolean; failed_login_count: number; locked_until: Date | null; tokens_valid_after: Date };
+export class AuthRepository {
+  async findUser(email: string): Promise<UserRow | undefined> { const result = await primaryPool.query<UserRow>('SELECT * FROM users WHERE email=$1 AND deleted_at IS NULL', [email]); return result.rows[0]; }
+  async findById(id: string): Promise<UserRow | undefined> { const result = await primaryPool.query<UserRow>('SELECT * FROM users WHERE id=$1 AND deleted_at IS NULL', [id]); return result.rows[0]; }
+  async register(input: { email: string; phone?: string; passwordHash: string; fullName: string; role: string; doctor?: { licenseNumber: string; specializations: string[]; languages: string[]; consultationFeeMinor: number; yearsExperience: number; bio?: string } }): Promise<UserRow> {
+    const client = await primaryPool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query<UserRow>('INSERT INTO users (email,phone,password_hash,role) VALUES ($1,$2,$3,$4) RETURNING *', [input.email, input.phone ?? null, input.passwordHash, input.role]);
+      const user = result.rows[0];
+      if (!user) throw new Error('User insert did not return a row');
+      await client.query('INSERT INTO profiles (user_id,full_name) VALUES ($1,$2)', [user.id, input.fullName]);
+      if (input.doctor) await client.query('INSERT INTO doctors (user_id,display_name,license_number,specializations,languages,bio,years_experience,consultation_fee_minor) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [user.id, input.fullName, input.doctor.licenseNumber, input.doctor.specializations, input.doctor.languages, input.doctor.bio ?? null, input.doctor.yearsExperience, input.doctor.consultationFeeMinor]);
+      await client.query('COMMIT'); return user;
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+  }
+  async recordFailure(id: string, max: number, minutes: number): Promise<void> { await primaryPool.query(`UPDATE users SET failed_login_count=failed_login_count+1, locked_until=CASE WHEN failed_login_count+1 >= $2 THEN now()+($3||' minutes')::interval ELSE locked_until END WHERE id=$1`, [id, max, minutes]); }
+  async resetFailures(id: string): Promise<void> { await primaryPool.query('UPDATE users SET failed_login_count=0,locked_until=NULL,last_login_at=now() WHERE id=$1', [id]); }
+  async refresh(hash: string): Promise<{ id: string; user_id: string; family_id: string; revoked_at: Date | null; expires_at: Date } | undefined> { const result = await primaryPool.query<{ id: string; user_id: string; family_id: string; revoked_at: Date | null; expires_at: Date }>('SELECT id,user_id,family_id,revoked_at,expires_at FROM refresh_tokens WHERE token_hash=$1', [hash]); return result.rows[0]; }
+  async revokeFamily(family: string): Promise<void> { await primaryPool.query('UPDATE refresh_tokens SET revoked_at=COALESCE(revoked_at,now()) WHERE family_id=$1', [family]); }
+  async revokeToken(id: string, replacement?: string): Promise<void> {
+    if (replacement) await primaryPool.query('UPDATE refresh_tokens SET revoked_at=now(),replaced_by=$2 WHERE id=$1 AND revoked_at IS NULL', [id, replacement]);
+    else await primaryPool.query('UPDATE refresh_tokens SET revoked_at=now() WHERE id=$1 AND revoked_at IS NULL', [id]);
+  }
+  async saveRefresh(userId: string, family: string, hash: string, expiry: Date, ip?: string, agent?: string): Promise<void> { await primaryPool.query('INSERT INTO refresh_tokens (user_id,family_id,token_hash,expires_at,ip,user_agent) VALUES ($1,$2,$3,$4,$5,$6)', [userId, family, hash, expiry, ip ?? null, agent ?? null]); }
+  async revokeUserTokens(id: string): Promise<void> { await primaryPool.query('UPDATE refresh_tokens SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL', [id]); }
+  async bumpTva(id: string): Promise<void> { await primaryPool.query('UPDATE users SET tokens_valid_after=now() WHERE id=$1', [id]); }
+  async updatePassword(id: string, hash: string): Promise<void> { await primaryPool.query('UPDATE users SET password_hash=$2,tokens_valid_after=now() WHERE id=$1', [id, hash]); }
+  hashRefresh(token: string): string { return sha256(token); }
+}
