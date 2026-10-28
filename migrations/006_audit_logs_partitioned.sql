@@ -1,4 +1,4 @@
--- +migrate Up
+-- Up Migration
 CREATE TABLE audit_logs (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -44,7 +44,9 @@ BEGIN
   );
 END;
 $$ LANGUAGE plpgsql;
-SELECT audit_create_partition(date_trunc('month', now())::date + (i || ' month')::interval)
+SELECT audit_create_partition(
+  (date_trunc('month', now())::date + (i || ' month')::interval)::date
+)
 FROM generate_series(0, 3) i;
 
 CREATE TABLE audit_chain_heads (
@@ -54,7 +56,7 @@ CREATE TABLE audit_chain_heads (
 );
 INSERT INTO audit_chain_heads (chain_shard) SELECT generate_series(0, 15);
 
--- +migrate Down
+-- Down Migration
 DROP TABLE IF EXISTS audit_chain_heads;
 DROP FUNCTION IF EXISTS audit_create_partition(date);
 DROP FUNCTION IF EXISTS audit_logs_immutable();

@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amrutam-worker
+  labels:
+    app.kubernetes.io/name: amrutam-worker
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: amrutam-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: amrutam-worker
+        app.kubernetes.io/component: worker
+    spec:
+      terminationGracePeriodSeconds: 120
+      imagePullSecrets:
+        - name: amrutam-registry
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: amrutam-worker
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: ghcr.io/amrutam/telemedicine-backend:0.1.0
+          imagePullPolicy: IfNotPresent
+          command: [node, dist/src/worker.js]
+          ports:
+            - name: metrics
+              containerPort: 9464
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: amrutam-config
+            - secretRef:
+                name: amrutam-runtime
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: amrutam-worker
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: '1'
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          startupProbe:
+            exec:
+              command: [node, -e, 'process.kill(1, 0)']
+            periodSeconds: 5
+            failureThreshold: 24
+          livenessProbe:
+            exec:
+              command: [node, -e, 'process.kill(1, 0)']
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: [node, -e, 'process.kill(1, 0)']
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3

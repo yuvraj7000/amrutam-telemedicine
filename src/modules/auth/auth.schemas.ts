@@ -15,8 +15,6 @@ export const registerSchema = z.object({
 export const loginSchema = z.object({ email: z.string().email(), password: z.string().max(256) }).strict();
 export const refreshSchema = z.object({ refreshToken: z.string().min(1) }).strict();
 export const changePasswordSchema = z.object({ currentPassword: z.string(), newPassword: password }).strict();
-export const forgotPasswordSchema = z.object({ email: z.string().email() }).strict();
-export const resetPasswordSchema = z.object({ token: z.string().min(1), newPassword: password }).strict();
 export const verifyMfaSchema = z.object({
   mfaToken: z.string().min(1),
   code: z.string().regex(/^\d{6}$/).optional(),

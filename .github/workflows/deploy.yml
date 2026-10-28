@@ -1,0 +1,184 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  staging:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+      id-token: write
+      packages: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Configure cluster access
+        run: aws eks update-kubeconfig --name "${{ vars.EKS_CLUSTER_NAME }}" --region "${{ vars.AWS_REGION }}"
+      - name: Prepare staging namespace and runtime configuration
+        run: |
+          kubectl create namespace amrutam-staging --dry-run=client -o yaml | kubectl apply -f -
+          kubectl apply --namespace amrutam-staging -f infra/k8s/base/configmap.yaml
+          kubectl apply --namespace amrutam-staging -f infra/k8s/base/external-secret.yaml
+          kubectl wait --for=condition=Ready externalsecret/amrutam-runtime --namespace amrutam-staging --timeout=3m
+      - name: Run compatible database migrations
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}:${{ github.event.workflow_run.head_sha }}
+          NAMESPACE: amrutam-staging
+        run: |
+          JOB_NAME="migrate-${GITHUB_SHA:0:12}"
+          cat <<EOF | kubectl apply -f -
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: ${JOB_NAME}
+            namespace: ${NAMESPACE}
+          spec:
+            backoffLimit: 0
+            template:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: amrutam-migration
+              spec:
+                restartPolicy: Never
+                imagePullSecrets:
+                  - name: amrutam-registry
+                containers:
+                  - name: migrate
+                    image: ${IMAGE}
+                    command: [npm, run, migrate:up]
+                    envFrom:
+                      - configMapRef:
+                          name: amrutam-config
+                      - secretRef:
+                          name: amrutam-runtime
+          EOF
+          kubectl wait --for=condition=complete "job/${JOB_NAME}" --namespace "${NAMESPACE}" --timeout=10m || {
+            kubectl logs "job/${JOB_NAME}" --namespace "${NAMESPACE}" --all-containers=true
+            exit 1
+          }
+          kubectl delete "job/${JOB_NAME}" --namespace "${NAMESPACE}" --wait=false
+      - name: Apply staging manifests
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}:${{ github.event.workflow_run.head_sha }}
+        run: |
+          kubectl kustomize infra/k8s/overlays/staging |
+            sed "s#ghcr.io/amrutam/telemedicine-backend:staging#${IMAGE}#g" |
+            kubectl apply -f -
+      - name: Wait for staging rollout and smoke test
+        run: |
+          if ! kubectl rollout status deployment/amrutam-api --namespace amrutam-staging --timeout=5m; then
+            kubectl rollout undo deployment/amrutam-api --namespace amrutam-staging
+            kubectl rollout undo deployment/amrutam-worker --namespace amrutam-staging
+            exit 1
+          fi
+          if ! kubectl rollout status deployment/amrutam-worker --namespace amrutam-staging --timeout=5m; then
+            kubectl rollout undo deployment/amrutam-api --namespace amrutam-staging
+            kubectl rollout undo deployment/amrutam-worker --namespace amrutam-staging
+            exit 1
+          fi
+          if ! curl --fail --retry 10 --retry-delay 6 https://api.staging.amrutam.example/health/ready; then
+            kubectl rollout undo deployment/amrutam-api --namespace amrutam-staging
+            kubectl rollout undo deployment/amrutam-worker --namespace amrutam-staging
+            exit 1
+          fi
+
+  production:
+    needs: staging
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+      packages: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Configure cluster access
+        run: aws eks update-kubeconfig --name "${{ vars.EKS_CLUSTER_NAME }}" --region "${{ vars.AWS_REGION }}"
+      - name: Prepare production namespace and runtime configuration
+        run: |
+          kubectl create namespace amrutam-production --dry-run=client -o yaml | kubectl apply -f -
+          kubectl apply --namespace amrutam-production -f infra/k8s/base/configmap.yaml
+          kubectl apply --namespace amrutam-production -f infra/k8s/base/external-secret.yaml
+          kubectl wait --for=condition=Ready externalsecret/amrutam-runtime --namespace amrutam-production --timeout=3m
+      - name: Run compatible database migrations
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}:${{ github.event.workflow_run.head_sha }}
+          NAMESPACE: amrutam-production
+        run: |
+          JOB_NAME="migrate-${GITHUB_SHA:0:12}"
+          cat <<EOF | kubectl apply -f -
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: ${JOB_NAME}
+            namespace: ${NAMESPACE}
+          spec:
+            backoffLimit: 0
+            template:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: amrutam-migration
+              spec:
+                restartPolicy: Never
+                imagePullSecrets:
+                  - name: amrutam-registry
+                containers:
+                  - name: migrate
+                    image: ${IMAGE}
+                    command: [npm, run, migrate:up]
+                    envFrom:
+                      - configMapRef:
+                          name: amrutam-config
+                      - secretRef:
+                          name: amrutam-runtime
+          EOF
+          kubectl wait --for=condition=complete "job/${JOB_NAME}" --namespace "${NAMESPACE}" --timeout=10m || {
+            kubectl logs "job/${JOB_NAME}" --namespace "${NAMESPACE}" --all-containers=true
+            exit 1
+          }
+          kubectl delete "job/${JOB_NAME}" --namespace "${NAMESPACE}" --wait=false
+      - name: Apply production manifests
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}:${{ github.event.workflow_run.head_sha }}
+        run: |
+          kubectl kustomize infra/k8s/overlays/prod |
+            sed "s#ghcr.io/amrutam/telemedicine-backend:prod#${IMAGE}#g" |
+            kubectl apply -f -
+      - name: Wait for production rollout
+        run: |
+          if ! kubectl rollout status deployment/amrutam-api --namespace amrutam-production --timeout=5m; then
+            kubectl rollout undo deployment/amrutam-api --namespace amrutam-production
+            kubectl rollout undo deployment/amrutam-worker --namespace amrutam-production
+            exit 1
+          fi
+          if ! kubectl rollout status deployment/amrutam-worker --namespace amrutam-production --timeout=5m; then
+            kubectl rollout undo deployment/amrutam-api --namespace amrutam-production
+            kubectl rollout undo deployment/amrutam-worker --namespace amrutam-production
+            exit 1
+          fi
+          if ! curl --fail --retry 10 --retry-delay 6 https://api.amrutam.example/health/ready; then
+            kubectl rollout undo deployment/amrutam-api --namespace amrutam-production
+            kubectl rollout undo deployment/amrutam-worker --namespace amrutam-production
+            exit 1
+          fi

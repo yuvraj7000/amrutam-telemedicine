@@ -2,11 +2,7 @@ import { asClass, asFunction, asValue, createContainer, InjectionMode } from 'aw
 
 import { CacheService } from './common/cache/cache.service.js';
 import { EncryptionService } from './common/crypto/encryption.service.js';
-import {
-  EnvKeyProvider,
-  KmsKeyProvider,
-  type KeyProvider,
-} from './common/crypto/key-provider.js';
+import { createKeyProvider, type KeyProvider } from './common/crypto/key-provider.js';
 import { env } from './config/env.js';
 
 export function createAppContainer() {
@@ -14,9 +10,7 @@ export function createAppContainer() {
   container.register({
     cacheService: asClass(CacheService).singleton(),
     env: asValue(env),
-    keyProvider: asFunction(
-      (): KeyProvider => (env.KMS_KEY_ID ? new KmsKeyProvider() : new EnvKeyProvider(env)),
-    ).singleton(),
+    keyProvider: asFunction((): KeyProvider => createKeyProvider(env)).singleton(),
     encryptionService: asClass(EncryptionService).singleton(),
   });
   return container;

@@ -1,4 +1,4 @@
--- +migrate Up
+-- Up Migration
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS citext;
 CREATE EXTENSION IF NOT EXISTS btree_gist;
@@ -24,7 +24,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- +migrate Down
+-- Down Migration
 DROP FUNCTION IF EXISTS set_updated_at();
 DROP TYPE IF EXISTS payment_status;
 DROP TYPE IF EXISTS consultation_status;

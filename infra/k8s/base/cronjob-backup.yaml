@@ -1,0 +1,48 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: amrutam-backup-verify
+spec:
+  schedule: '0 3 * * 0'
+  timeZone: UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: amrutam-backup-verify
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: backup-verify
+              image: postgres:16-alpine
+              command:
+                - /bin/sh
+                - -ec
+                - pg_dump --no-owner --no-acl --format=custom "$DATABASE_URL" | pg_restore --list - >/dev/null
+              envFrom:
+                - secretRef:
+                    name: amrutam-runtime
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]

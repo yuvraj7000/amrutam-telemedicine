@@ -1,4 +1,4 @@
--- +migrate Up
+-- Up Migration
 CREATE TABLE consultations (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   patient_id uuid NOT NULL REFERENCES users(id),
@@ -63,7 +63,7 @@ CREATE TABLE payment_events (
   processed_at timestamptz
 );
 
--- +migrate Down
+-- Down Migration
 DROP TABLE IF EXISTS payment_events;
 DROP TABLE IF EXISTS payments;
 DROP TABLE IF EXISTS consultations;

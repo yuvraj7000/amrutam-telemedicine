@@ -1,4 +1,4 @@
--- +migrate Up
+-- Up Migration
 CREATE TABLE doctors (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL UNIQUE REFERENCES users(id),
@@ -69,7 +69,7 @@ CREATE INDEX idx_slots_held_expiry ON availability_slots (held_until)
 CREATE TRIGGER trg_slots_updated BEFORE UPDATE ON availability_slots
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
--- +migrate Down
+-- Down Migration
 DROP TABLE IF EXISTS availability_slots;
 DROP FUNCTION IF EXISTS doctors_search_vector_update();
 DROP TABLE IF EXISTS doctors;

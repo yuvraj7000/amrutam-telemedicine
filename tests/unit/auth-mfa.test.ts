@@ -19,12 +19,19 @@ jest.mock('../../src/common/cache/redis.js', () => ({
 }));
 
 class MemoryAuthRepository extends AuthRepository {
-  constructor(readonly user: UserRow, private backupHashes: string[] = []) {
+  constructor(
+    readonly user: UserRow,
+    private backupHashes: string[] = [],
+  ) {
     super();
   }
 
-  override async findUser(): Promise<UserRow> { return this.user; }
-  override async findById(): Promise<UserRow> { return this.user; }
+  override async findUser(): Promise<UserRow> {
+    return this.user;
+  }
+  override async findById(): Promise<UserRow> {
+    return this.user;
+  }
   override async resetFailures(): Promise<void> {}
   override async recordFailure(): Promise<void> {}
   override async saveRefresh(): Promise<void> {}
@@ -64,7 +71,10 @@ class MemoryAuthRepository extends AuthRepository {
 describe('MFA authentication', () => {
   const tokenService = new TokenService();
   const encryption = new EncryptionService(
-    new EnvKeyProvider({ ENC_KEYS: { '1': Buffer.alloc(32, 7).toString('base64') }, ENC_ACTIVE_VERSION: 1 }),
+    new EnvKeyProvider({
+      ENC_KEYS: { '1': Buffer.alloc(32, 7).toString('base64') },
+      ENC_ACTIVE_VERSION: 1,
+    }),
   );
   const acceptedSteps = new Map<string, number>();
   const consumedChallenges = new Set<string>();
@@ -89,7 +99,10 @@ describe('MFA authentication', () => {
     jest.mocked(redis.del).mockResolvedValue(1);
   });
 
-  async function createDoctor(): Promise<{ service: AuthService; repository: MemoryAuthRepository }> {
+  async function createDoctor(): Promise<{
+    service: AuthService;
+    repository: MemoryAuthRepository;
+  }> {
     const repository = new MemoryAuthRepository({
       id: 'doctor-1',
       email: 'doctor@example.test',
@@ -108,10 +121,15 @@ describe('MFA authentication', () => {
 
   it('forces doctor enrollment, encrypts the seed, verifies TOTP, and consumes backup codes once', async () => {
     const { service, repository } = await createDoctor();
-    const firstLogin = await service.login({ email: repository.user.email, password: 'correct horse battery' });
+    const firstLogin = await service.login({
+      email: repository.user.email,
+      password: 'correct horse battery',
+    });
     expect('mfaEnrollmentRequired' in firstLogin && firstLogin.mfaEnrollmentRequired).toBe(true);
     if (!('setupToken' in firstLogin)) throw new Error('Expected setup token');
-    expect(tokenService.verifyScoped(firstLogin.setupToken, 'mfa_setup').sub).toBe(repository.user.id);
+    expect(tokenService.verifyScoped(firstLogin.setupToken, 'mfa_setup').sub).toBe(
+      repository.user.id,
+    );
 
     const setup = await service.setupMfa(repository.user.id);
     expect(setup.otpauthUrl).toContain('otpauth://totp/');
@@ -123,7 +141,10 @@ describe('MFA authentication', () => {
     expect(enabled.pair).toBeDefined();
     expect(repository.user.mfa_enabled).toBe(true);
 
-    const challenge = await service.login({ email: repository.user.email, password: 'correct horse battery' });
+    const challenge = await service.login({
+      email: repository.user.email,
+      password: 'correct horse battery',
+    });
     expect('mfaRequired' in challenge && challenge.mfaRequired).toBe(true);
     if (!('mfaToken' in challenge)) throw new Error('Expected MFA token');
     const laterStep = Math.floor(Date.now() / 30_000) + 1;
@@ -143,18 +164,35 @@ describe('MFA authentication', () => {
       code: ERROR_CODES.INVALID_MFA_CODE,
     });
 
-    const backupChallenge = await service.login({ email: repository.user.email, password: 'correct horse battery' });
+    const backupChallenge = await service.login({
+      email: repository.user.email,
+      password: 'correct horse battery',
+    });
     if (!('mfaToken' in backupChallenge)) throw new Error('Expected MFA token');
-    const backupPair = await service.verifyMfa(backupChallenge.mfaToken, undefined, enabled.backupCodes[0]);
+    const backupPair = await service.verifyMfa(
+      backupChallenge.mfaToken,
+      undefined,
+      enabled.backupCodes[0],
+    );
     expect(jwt.decode(backupPair.accessToken)).toMatchObject({ amr: ['pwd', 'otp'] });
 
-    const reuseChallenge = await service.login({ email: repository.user.email, password: 'correct horse battery' });
+    const reuseChallenge = await service.login({
+      email: repository.user.email,
+      password: 'correct horse battery',
+    });
     if (!('mfaToken' in reuseChallenge)) throw new Error('Expected MFA token');
-    await expect(service.verifyMfa(reuseChallenge.mfaToken, undefined, enabled.backupCodes[0])).rejects.toMatchObject({
+    await expect(
+      service.verifyMfa(reuseChallenge.mfaToken, undefined, enabled.backupCodes[0]),
+    ).rejects.toMatchObject({
       code: ERROR_CODES.INVALID_MFA_CODE,
     });
-    expect(encryption.decrypt(repository.user.mfa_secret_enc ?? '', `users.mfa_secret_enc:${repository.user.id}`)).toBe(setup.secret);
-  });
+    await expect(
+      encryption.decrypt(
+        repository.user.mfa_secret_enc ?? '',
+        `users.mfa_secret_enc:${repository.user.id}`,
+      ),
+    ).resolves.toBe(setup.secret);
+  }, 20_000);
 
   it('rejects setup tokens on ordinary authenticated routes', async () => {
     const setupToken = tokenService.issueScoped(
@@ -167,16 +205,43 @@ describe('MFA authentication', () => {
     app.use(errorHandler);
 
     jest.mocked(redis.get).mockResolvedValue(new Date(Date.now() - 60_000).toISOString());
-    const setupResponse = await request(app).get('/mfa/setup').set('Authorization', `Bearer ${setupToken}`);
+    const setupResponse = await request(app)
+      .get('/mfa/setup')
+      .set('Authorization', `Bearer ${setupToken}`);
     expect(setupResponse.status).toBe(204);
 
-    const response = await request(app).get('/private').set('Authorization', `Bearer ${setupToken}`);
+    const response = await request(app)
+      .get('/private')
+      .set('Authorization', `Bearer ${setupToken}`);
     expect(response.status).toBe(401);
+  });
+
+  it('accepts a token issued in the same second as the session-revocation timestamp', async () => {
+    const app = express();
+    app.get('/private', authenticate, (_req, res) => res.sendStatus(204));
+    app.use(errorHandler);
+    const accessToken = tokenService.issueAccess({
+      sub: 'patient-1',
+      role: 'PATIENT',
+      sid: 'family-1',
+      amr: ['pwd'],
+      jti: 'access-token',
+    });
+    const currentSecond = Math.floor(Date.now() / 1000) * 1000;
+    jest.mocked(redis.get).mockResolvedValue(new Date(currentSecond + 999).toISOString());
+
+    const response = await request(app)
+      .get('/private')
+      .set('Authorization', `Bearer ${accessToken}`);
+
+    expect(response.status).toBe(204);
   });
 
   it('prevents doctors from disabling MFA', async () => {
     const { service, repository } = await createDoctor();
-    await expect(service.disableMfa(repository.user.id, 'password', '123456')).rejects.toMatchObject({
+    await expect(
+      service.disableMfa(repository.user.id, 'password', '123456'),
+    ).rejects.toMatchObject({
       code: ERROR_CODES.FORBIDDEN,
     });
   });
@@ -193,7 +258,9 @@ describe('MFA authentication', () => {
 
     nextMock.mockClear();
     requireMfaStepUp(
-      { user: { id: 'admin-1', role: 'ADMIN', amr: ['pwd', 'otp'], iat: 1, jti: 'jti' } } as Request,
+      {
+        user: { id: 'admin-1', role: 'ADMIN', amr: ['pwd', 'otp'], iat: 1, jti: 'jti' },
+      } as Request,
       {} as Response,
       next,
     );

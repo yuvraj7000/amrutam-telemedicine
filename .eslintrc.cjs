@@ -16,6 +16,14 @@ module.exports = {
   ignorePatterns: ['dist/', 'coverage/', 'node_modules/'],
   overrides: [
     {
+      files: ['FRONTEND/**/*.{ts,tsx}'],
+      parserOptions: {
+        project: './FRONTEND/tsconfig.json',
+        tsconfigRootDir: __dirname,
+        sourceType: 'module',
+      },
+    },
+    {
       files: ['**/*.js'],
       parserOptions: {
         project: null,

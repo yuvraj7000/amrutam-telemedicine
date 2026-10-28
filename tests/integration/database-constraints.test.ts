@@ -1,11 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
 import { EncryptionService } from '../../src/common/crypto/encryption.service.js';
 import { EnvKeyProvider } from '../../src/common/crypto/key-provider.js';
-import {
-  applyMigrations,
-  startTestContainers,
-  stopTestContainers,
-} from '../helpers/containers.js';
+import { AuthRepository } from '../../src/modules/auth/auth.repository.js';
+import { DoctorsRepository } from '../../src/modules/doctors/doctors.repository.js';
+import { applyMigrations, startTestContainers, stopTestContainers } from '../helpers/containers.js';
 import type { TestContainers } from '../helpers/containers.js';
 
 describe('database migrations and invariants', () => {
@@ -77,7 +76,7 @@ describe('database migrations and invariants', () => {
         ENC_ACTIVE_VERSION: 1,
       }),
     );
-    const ciphertext = encryption.encrypt(secret, `users.mfa_secret_enc:${userId}`);
+    const ciphertext = await encryption.encrypt(secret, `users.mfa_secret_enc:${userId}`);
     await pool.query(
       'INSERT INTO users (id,email,password_hash,mfa_secret_enc) VALUES ($1,$2,$3,$4)',
       [userId, 'mfa-ciphertext@example.test', 'test-hash', ciphertext],
@@ -89,7 +88,70 @@ describe('database migrations and invariants', () => {
     );
     expect(raw.rows[0]?.mfa_secret_enc).toMatch(/^v1:/);
     expect(raw.rows[0]?.mfa_secret_enc).not.toContain(secret);
-    expect(encryption.decrypt(raw.rows[0]?.mfa_secret_enc ?? '', `users.mfa_secret_enc:${userId}`)).toBe(secret);
+    await expect(
+      encryption.decrypt(raw.rows[0]?.mfa_secret_enc ?? '', `users.mfa_secret_enc:${userId}`),
+    ).resolves.toBe(secret);
+  });
+
+  it('updates doctor verification status and verified timestamp', async () => {
+    const adminId = randomUUID();
+    const doctorUserId = randomUUID();
+    const doctorId = randomUUID();
+    await pool.query(
+      `INSERT INTO users (id,email,password_hash,role) VALUES
+       ($1,$2,'test','ADMIN'), ($3,$4,'test','DOCTOR')`,
+      [
+        adminId,
+        `${adminId}@example.test`,
+        doctorUserId,
+        `${doctorUserId}@example.test`,
+      ],
+    );
+    await pool.query(
+      `INSERT INTO doctors (id,user_id,display_name,license_number,consultation_fee_minor)
+       VALUES ($1,$2,'Dr Review',$3,50000)`,
+      [doctorId, doctorUserId, `LICENSE-${doctorId}`],
+    );
+
+    const repository = new DoctorsRepository(pool);
+    const verified = await repository.setVerification(doctorId, 'VERIFIED', adminId);
+    expect(verified).toMatchObject({
+      id: doctorId,
+      verification_status: 'VERIFIED',
+    });
+    const verifiedAt = await pool.query<{ verified_at: Date | null }>(
+      'SELECT verified_at FROM doctors WHERE id=$1',
+      [doctorId],
+    );
+    expect(verifiedAt.rows[0]?.verified_at).toBeInstanceOf(Date);
+
+    const rejected = await repository.setVerification(doctorId, 'REJECTED', adminId);
+    expect(rejected).toMatchObject({
+      id: doctorId,
+      verification_status: 'REJECTED',
+    });
+    const rejectedAt = await pool.query<{ verified_at: Date | null }>(
+      'SELECT verified_at FROM doctors WHERE id=$1',
+      [doctorId],
+    );
+    expect(rejectedAt.rows[0]?.verified_at).toBeNull();
+  });
+
+  it('registers accounts without email verification requirements', async () => {
+    const repository = new AuthRepository(pool);
+    const user = await repository.register(
+      {
+        email: `${randomUUID()}@example.test`,
+        passwordHash: 'initial-password-hash',
+        fullName: 'Email Test',
+        role: 'PATIENT',
+      },
+    );
+    expect(await repository.findUser(user.email)).toMatchObject({
+      id: user.id,
+      email: user.email,
+      password_hash: 'initial-password-hash',
+    });
   });
 
   it('protects audit logs and creates the current and future partitions', async () => {
@@ -120,18 +182,22 @@ describe('database migrations and invariants', () => {
     );
   });
 
-  it('can migrate down all migrations and back up', async () => {
-    await applyMigrations(containers.postgres.getConnectionUri(), 'down', 8);
+  it('rolls back and reapplies the email-auth removal migration', async () => {
+    const databaseUrl = containers.postgres.getConnectionUri();
+    await applyMigrations(databaseUrl, 'down', 1);
     const afterDown = await pool.query(
-      `SELECT to_regclass('public.users') AS users, to_regclass('public.analytics_daily') AS analytics`,
+      `SELECT to_regclass('public.auth_email_tokens') AS tokens,
+              EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_name='users' AND column_name='email_verified_at') AS email_verified_at`,
     );
-    expect(afterDown.rows[0]).toEqual({ users: null, analytics: null });
+    expect(afterDown.rows[0]).toEqual({ tokens: 'auth_email_tokens', email_verified_at: true });
 
-    await applyMigrations(containers.postgres.getConnectionUri(), 'up');
+    await applyMigrations(databaseUrl, 'up', 1);
     const afterUp = await pool.query(
-      `SELECT to_regclass('public.users') AS users, to_regclass('public.analytics_daily') AS analytics`,
+      `SELECT to_regclass('public.auth_email_tokens') AS tokens,
+              EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_name='users' AND column_name='email_verified_at') AS email_verified_at`,
     );
-    expect(afterUp.rows[0].users).toBe('users');
-    expect(afterUp.rows[0].analytics).toBe('analytics_daily');
+    expect(afterUp.rows[0]).toEqual({ tokens: null, email_verified_at: false });
   });
 });

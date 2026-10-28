@@ -1,5 +1,17 @@
 name: amrutam
 
+x-app: &app
+  build:
+    context: ../..
+    dockerfile: infra/docker/Dockerfile
+  env_file:
+    - ../../.env
+  environment: &app-environment
+    NODE_ENV: development
+    DATABASE_URL: postgres://amrutam:amrutam@postgres:5432/amrutam
+    REDIS_URL: redis://redis:6379
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -14,6 +26,7 @@ services:
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U amrutam']
       interval: 5s
+      timeout: 3s
       retries: 10
 
   redis:
@@ -21,15 +34,108 @@ services:
     command: ['redis-server', '--appendonly', 'yes']
     ports:
       - '6379:6379'
+    volumes:
+      - redisdata:/data
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
+      timeout: 3s
       retries: 10
 
-  mailhog:
-    image: mailhog/mailhog
+  migrate:
+    <<: *app
+    command: ['npm', 'run', 'migrate:up']
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  api:
+    <<: *app
+    command: ['npm', 'start']
     ports:
-      - '8025:8025'
+      - '3000:3000'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:3000/health/live']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+  worker:
+    <<: *app
+    command: ['npm', 'run', 'start:worker']
+    ports:
+      - '9464:9464'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    command: ['--config=/etc/otelcol-contrib/config.yaml']
+    volumes:
+      - ./otel-collector-local.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - '4317:4317'
+      - '4318:4318'
+      - '8889:8889'
+    depends_on:
+      - jaeger
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: 'true'
+    ports:
+      - '16686:16686'
+      - '4317'
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--config.expand-env'
+    environment:
+      METRICS_TOKEN: ${METRICS_TOKEN:?Copy .env.example to .env and set METRICS_TOKEN}
+    volumes:
+      - ./prometheus-local.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheusdata:/prometheus
+    ports:
+      - '9090:9090'
+    depends_on:
+      - api
+      - worker
+
+  grafana:
+    image: grafana/grafana:11.2.2
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    volumes:
+      - grafanadata:/var/lib/grafana
+      - ./grafana-datasource.yaml:/etc/grafana/provisioning/datasources/prometheus.yaml:ro
+      - ./grafana-dashboards.yaml:/etc/grafana/provisioning/dashboards/amrutam.yaml:ro
+      - ../observability/grafana/dashboards:/var/lib/grafana/dashboards/amrutam:ro
+    ports:
+      - '3001:3000'
+    depends_on:
+      - prometheus
 
 volumes:
   pgdata:
+  redisdata:
+  prometheusdata:
+  grafanadata:

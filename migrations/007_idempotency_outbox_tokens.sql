@@ -1,4 +1,4 @@
--- +migrate Up
+-- Up Migration
 CREATE TABLE idempotency_keys (
   user_id uuid NOT NULL,
   key text NOT NULL CHECK (length(key) BETWEEN 8 AND 128),
@@ -51,7 +51,7 @@ CREATE TABLE mfa_backup_codes (
 );
 CREATE INDEX idx_backup_user ON mfa_backup_codes (user_id) WHERE used_at IS NULL;
 
--- +migrate Down
+-- Down Migration
 DROP TABLE IF EXISTS mfa_backup_codes;
 DROP TABLE IF EXISTS refresh_tokens;
 DROP TABLE IF EXISTS outbox_events;

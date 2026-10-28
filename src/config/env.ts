@@ -46,7 +46,7 @@ const envSchema = z
     MFA_ISSUER: z.string().min(1).default('Amrutam'),
     LOGIN_MAX_FAILURES: z.coerce.number().int().positive().default(5),
     LOGIN_LOCK_MINUTES: z.coerce.number().int().positive().default(15),
-    ENC_KEYS: jsonRecord,
+    ENC_KEYS: jsonRecord.optional(),
     ENC_ACTIVE_VERSION: z.coerce.number().int().positive().default(1),
     KMS_KEY_ID: z.string().optional().or(z.literal('')),
     RL_GLOBAL_PER_MIN: z.coerce.number().int().positive().default(120),
@@ -66,6 +66,16 @@ const envSchema = z
   })
   .strict()
   .superRefine((value, context) => {
+    for (const [version, encodedKey] of Object.entries(value.ENC_KEYS ?? {})) {
+      const decodedKey = Buffer.from(encodedKey, 'base64');
+      if (decodedKey.length !== 32 || decodedKey.toString('base64') !== encodedKey) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['ENC_KEYS', version],
+          message: 'must be a canonical base64-encoded 32-byte key',
+        });
+      }
+    }
     if (!value.JWT_KEYS[value.JWT_ACTIVE_KID]) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -73,11 +83,11 @@ const envSchema = z
         message: 'must reference a key in JWT_KEYS',
       });
     }
-    if (!value.ENC_KEYS[String(value.ENC_ACTIVE_VERSION)]) {
+    if (!value.KMS_KEY_ID && !value.ENC_KEYS?.[String(value.ENC_ACTIVE_VERSION)]) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['ENC_ACTIVE_VERSION'],
-        message: 'must reference a key in ENC_KEYS',
+        message: 'must reference a key in ENC_KEYS when KMS_KEY_ID is not configured',
       });
     }
     if (
@@ -143,11 +153,32 @@ export function parseEnv(input: NodeJS.ProcessEnv = process.env): Env {
     throw new Error(`Invalid environment configuration: ${details}`);
   }
 
+  const corsOrigins = parsed.data.CORS_ORIGINS.split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  if (parsed.data.NODE_ENV !== 'production') {
+    const loopbackAliases = corsOrigins.flatMap((origin) => {
+      try {
+        const url = new URL(origin);
+        if (url.hostname === 'localhost') {
+          url.hostname = '127.0.0.1';
+          return [url.origin];
+        }
+        if (url.hostname === '127.0.0.1') {
+          url.hostname = 'localhost';
+          return [url.origin];
+        }
+      } catch {
+        return [];
+      }
+      return [];
+    });
+    corsOrigins.push(...loopbackAliases);
+  }
+
   return {
     ...parsed.data,
-    CORS_ORIGINS: parsed.data.CORS_ORIGINS.split(',')
-      .map((origin) => origin.trim())
-      .filter(Boolean),
+    CORS_ORIGINS: [...new Set(corsOrigins)],
   };
 }
 

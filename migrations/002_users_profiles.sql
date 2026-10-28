@@ -1,4 +1,4 @@
--- +migrate Up
+-- Up Migration
 CREATE TABLE users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   email citext NOT NULL UNIQUE,
@@ -38,6 +38,6 @@ CREATE TABLE profiles (
 CREATE TRIGGER trg_profiles_updated BEFORE UPDATE ON profiles
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
--- +migrate Down
+-- Down Migration
 DROP TABLE IF EXISTS profiles;
 DROP TABLE IF EXISTS users;

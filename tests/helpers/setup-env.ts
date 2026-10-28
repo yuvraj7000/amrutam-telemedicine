@@ -8,7 +8,7 @@ process.env.DATABASE_READ_URL = '';
 process.env.REDIS_URL = 'redis://localhost:6379';
 process.env.JWT_KEYS = '{"k1":"test-key"}';
 process.env.JWT_ACTIVE_KID = 'k1';
-process.env.ENC_KEYS = '{"1":"test-encryption-key"}';
+process.env.ENC_KEYS = '{"1":"dGVzdC1vbmx5LWVuY3J5cHRpb24ta2V5LTAwMDAwMDA="}';
 process.env.ENC_ACTIVE_VERSION = '1';
 process.env.PAYMENT_PROVIDER = 'mock';
 process.env.PAYMENT_WEBHOOK_SECRET = 'test-webhook-secret';

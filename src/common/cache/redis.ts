@@ -13,6 +13,7 @@ export function createRedisClient(url = env.REDIS_URL): Redis {
 export const redis = createRedisClient();
 
 export async function checkRedis(): Promise<void> {
+  if (redis.status === 'wait') await redis.connect();
   await redis.ping();
 }
 

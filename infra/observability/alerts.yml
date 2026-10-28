@@ -1,0 +1,178 @@
+groups:
+  - name: amrutam-api-slos
+    interval: 30s
+    rules:
+      - alert: ApiErrorBudgetFastBurn
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(http_requests_total[5m])), 1)
+          ) > (14.4 * 0.0005)
+          and
+          (
+            sum(rate(http_requests_total{status=~"5.."}[1h]))
+            /
+            clamp_min(sum(rate(http_requests_total[1h])), 1)
+          ) > (14.4 * 0.0005)
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: API availability is burning the error budget rapidly
+          description: The 5m and 1h error ratios are above 14.4x the 30-day budget.
+
+      - alert: ApiErrorBudgetSlowBurn
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[30m]))
+            /
+            clamp_min(sum(rate(http_requests_total[30m])), 1)
+          ) > (6 * 0.0005)
+          and
+          (
+            sum(rate(http_requests_total{status=~"5.."}[6h]))
+            /
+            clamp_min(sum(rate(http_requests_total[6h])), 1)
+          ) > (6 * 0.0005)
+        for: 30m
+        labels:
+          severity: page
+        annotations:
+          summary: API availability is burning the error budget
+
+      - alert: ApiReadLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{method="GET"}[5m]))) > 0.2
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: API read p95 latency exceeds 200ms
+
+      - alert: ApiWriteLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{method=~"POST|PATCH|PUT|DELETE"}[5m]))) > 0.5
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: API write p95 latency exceeds 500ms
+
+      - alert: ApiReadLatencyCritical
+        expr: histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{method="GET"}[5m]))) > 0.2
+        for: 30m
+        labels:
+          severity: page
+        annotations:
+          summary: API read p95 latency has remained above 200ms for 30 minutes
+
+      - alert: ApiWriteLatencyCritical
+        expr: histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{method=~"POST|PATCH|PUT|DELETE"}[5m]))) > 0.5
+        for: 30m
+        labels:
+          severity: page
+        annotations:
+          summary: API write p95 latency has remained above 500ms for 30 minutes
+
+  - name: amrutam-workers
+    interval: 30s
+    rules:
+      - alert: OutboxLagHigh
+        expr: outbox_lag_seconds > 60
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Unpublished outbox events are delayed
+
+      - alert: DeadLetterQueueNotEmpty
+        expr: queue_failed{queue=~".*dlq"} > 0
+        for: 1m
+        labels:
+          severity: ticket
+        annotations:
+          summary: A worker dead-letter queue contains failed jobs
+
+      - alert: WorkerQueueGrowing
+        expr: queue_depth > 1000
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Worker queue depth is above 1000 jobs
+
+  - name: amrutam-dependencies
+    interval: 30s
+    rules:
+      - alert: DatabasePoolSaturated
+        expr: db_pool_connections{state="waiting"} > 0
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Requests are waiting for a PostgreSQL connection
+
+      - alert: PaymentCircuitBreakerOpen
+        expr: circuit_breaker_state{name="payment"} == 2
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: The payment circuit breaker is open
+
+      - alert: RefreshTokenReuseDetected
+        expr: increase(auth_events_total{event="refresh_reuse"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Refresh-token reuse was detected
+
+      - alert: WebhookSignatureFailures
+        expr: increase(webhook_signature_failures_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Payment webhook signature validation failed
+
+      - alert: PostgreSQLReplicaLagHigh
+        expr: pg_replica_lag_seconds > 10
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: PostgreSQL replica lag exceeds ten seconds
+
+      - alert: AuditChainBroken
+        expr: increase(audit_chain_broken_total[1h]) > 0
+        for: 0m
+        labels:
+          severity: page
+        annotations:
+          summary: Audit hash-chain verification detected tampering
+
+      - alert: AuthenticationFailuresSpiking
+        expr: sum(rate(auth_events_total{event="login_fail"}[5m])) > 5
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Authentication failures exceed the configured alert threshold
+
+      - alert: WorkerPodsUnavailable
+        expr: |
+          kube_deployment_status_replicas_available{deployment=~"amrutam-(api|worker)"} <
+          kube_deployment_spec_replicas{deployment=~"amrutam-(api|worker)"}
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: An Amrutam deployment has fewer available pods than desired
+
+      - alert: AmrutamPodCrashLooping
+        expr: increase(kube_pod_container_status_restarts_total{namespace=~"amrutam|amrutam-staging"}[10m]) > 3
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: An Amrutam pod is repeatedly restarting

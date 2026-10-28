@@ -55,11 +55,22 @@ export const authEvents = new Counter({
   labelNames: ['event'],
   registers: [metricsRegistry],
 });
+export const rateLimited = new Counter({
+  name: 'rate_limited_total',
+  help: 'Requests rejected by rate limiting',
+  labelNames: ['route'],
+  registers: [metricsRegistry],
+});
+export const webhookSignatureFailures = new Counter({
+  name: 'webhook_signature_failures_total',
+  help: 'Payment webhook signature validation failures',
+  registers: [metricsRegistry],
+});
 
 export function metricsMiddleware(req: Request, res: Response, next: NextFunction): void {
   const started = process.hrtime.bigint();
   res.once('finish', () => {
-    const route = req.route?.path ?? req.path;
+    const route = req.route?.path ?? 'unmatched';
     const seconds = Number(process.hrtime.bigint() - started) / 1e9;
     const statusClass = `${Math.floor(res.statusCode / 100)}xx`;
     httpRequestDuration.observe({ method: req.method, route, status_class: statusClass }, seconds);

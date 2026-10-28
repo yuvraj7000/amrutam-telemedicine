@@ -1,4 +1,4 @@
--- +migrate Up
+-- Up Migration
 CREATE TABLE prescriptions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   consultation_id uuid NOT NULL REFERENCES consultations(id),
@@ -16,5 +16,5 @@ CREATE TABLE prescriptions (
 CREATE INDEX idx_rx_patient ON prescriptions (patient_id, issued_at DESC);
 CREATE INDEX idx_rx_doctor ON prescriptions (doctor_id, issued_at DESC);
 
--- +migrate Down
+-- Down Migration
 DROP TABLE IF EXISTS prescriptions;

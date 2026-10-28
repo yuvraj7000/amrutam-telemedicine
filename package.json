@@ -11,8 +11,8 @@
     "dev": "tsx watch src/server.ts",
     "dev:worker": "tsx watch src/worker.ts",
     "build": "tsc -p tsconfig.build.json",
-    "start": "node dist/server.js",
-    "start:worker": "node dist/worker.js",
+    "start": "node dist/src/server.js",
+    "start:worker": "node dist/src/worker.js",
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -28,6 +28,7 @@
     "seed:load": "tsx scripts/seed.ts --load",
     "admin:create": "tsx scripts/create-admin.ts",
     "openapi:generate": "tsx scripts/generate-openapi.ts",
+    "postman:generate": "tsx scripts/generate-postman-collection.ts",
     "docker:up": "docker compose -f infra/docker/docker-compose.yml up --build"
   },
   "dependencies": {

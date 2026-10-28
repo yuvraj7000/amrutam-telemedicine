@@ -1,4 +1,4 @@
--- +migrate Up
+-- Up Migration
 CREATE TABLE analytics_daily (
   day date NOT NULL,
   doctor_id uuid NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
@@ -13,5 +13,5 @@ CREATE TABLE analytics_daily (
   PRIMARY KEY (day, doctor_id)
 );
 
--- +migrate Down
+-- Down Migration
 DROP TABLE IF EXISTS analytics_daily;
